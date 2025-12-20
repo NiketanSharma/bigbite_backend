@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
+import MongoStore from 'connect-mongo';
 import mongoose from 'mongoose';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -25,10 +26,10 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-// Configure Socket.IO
+// Configure Socket.IO (CORS origins handled below)
 export const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL,
+    origin: (origin, callback) => callback(null, true),
     credentials: true,
   },
 });
@@ -40,24 +41,48 @@ app.use(express.urlencoded({ extended: true }));
 // Cookie parser
 app.use(cookieParser());
 
-// CORS
+// Trust proxy when behind a reverse proxy (Heroku/nginx) so secure cookies work
+if (process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+// CORS - support single or comma-separated multiple FRONTEND_URLs
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((u) => u.trim());
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: (origin, callback) => {
+      // allow requests with no origin like mobile apps or curl
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error('CORS policy: Origin not allowed'), false);
+    },
     credentials: true,
   })
 );
-// app.use(cors())
 
-// Express session
+// Express session with MongoDB-backed store (recommended for production)
+const sessionStore = MongoStore.create({
+  mongoUrl: process.env.MONGODB_URI,
+  collectionName: process.env.SESSIONS_COLLECTION || 'sessions',
+  ttl: 24 * 60 * 60, // 1 day
+});
+
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET || 'change_this_secret',
+    store: sessionStore,
     resave: false,
     saveUninitialized: false,
+    proxy: process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production',
     cookie: {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
+      domain: process.env.COOKIE_DOMAIN || undefined,
+      maxAge: Number(process.env.SESSION_MAX_AGE) || 24 * 60 * 60 * 1000,
     },
   })
 );
