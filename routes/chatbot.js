@@ -1,6 +1,6 @@
 import express from 'express';
 import fetch from 'node-fetch';
-import { authenticateToken } from '../middleware/auth.js';
+import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -35,7 +35,7 @@ const switchToNextKey = () => {
 };
 
 // Detect order intent with AI
-router.post('/detect-order-intent', authenticateToken, async (req, res) => {
+router.post('/detect-order-intent', protect, async (req, res) => {
   try {
     const { message } = req.body;
     const userId = req.user.id;
@@ -122,7 +122,7 @@ router.post('/detect-order-intent', authenticateToken, async (req, res) => {
 });
 
 // General chatbot conversation
-router.post('/chat', authenticateToken, async (req, res) => {
+router.post('/chat', protect, async (req, res) => {
   try {
     const { message } = req.body;
 
