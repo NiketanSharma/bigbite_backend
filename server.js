@@ -47,7 +47,7 @@ if (process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production')
 }
 
 // CORS - support single or comma-separated multiple FRONTEND_URLs
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,https://bigbitefrontend-sigma.vercel.app')
   .split(',')
   .map((u) => u.trim());
 
@@ -62,6 +62,7 @@ app.use(
     credentials: true,
   })
 );
+// app.use(cors())
 
 // Express session with MongoDB-backed store (recommended for production)
 const sessionStore = MongoStore.create({
