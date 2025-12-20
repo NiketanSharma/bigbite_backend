@@ -125,6 +125,7 @@ router.post('/detect-order-intent', protect, async (req, res) => {
 router.post('/chat', protect, async (req, res) => {
   try {
     const { message } = req.body;
+    console.log('Chatbot received message:', message);
 
     if (!message) {
       return res.status(400).json({ success: false, message: 'Message is required' });
@@ -140,14 +141,19 @@ router.post('/chat', protect, async (req, res) => {
     const maxAttempts = GEMINI_API_KEYS.length;
     let aiResponse = '';
 
+    console.log('Making Gemini API call, max attempts:', maxAttempts);
+
     while (attempts < maxAttempts) {
       try {
         const apiUrl = getGeminiApiUrl();
+        console.log(`Attempt ${attempts + 1}: Calling Gemini API`);
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
         });
+
+        console.log(`Gemini API response status: ${response.status}`);
 
         if (!response.ok) {
           if (response.status === 429 || response.status === 403) {
@@ -160,10 +166,13 @@ router.post('/chat', protect, async (req, res) => {
         }
 
         const data = await response.json();
+        console.log('Gemini API response data:', data);
         aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not process that request.';
+        console.log('Extracted AI response:', aiResponse);
         break;
 
       } catch (error) {
+        console.error(`Attempt ${attempts + 1} failed:`, error.message);
         if ((error.message.includes('429') || error.message.includes('403')) && switchToNextKey()) {
           attempts++;
           continue;
@@ -175,6 +184,7 @@ router.post('/chat', protect, async (req, res) => {
       }
     }
 
+    console.log('Final response being sent:', { success: true, message: aiResponse });
     res.json({
       success: true,
       message: aiResponse
