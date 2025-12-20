@@ -312,26 +312,19 @@ router.get(
     session: true,
   }),
   (req, res) => {
-    // Successful authentication - set cookie
+    // Successful authentication - generate JWT token
     const token = jwt.sign(
       { id: req.user._id },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE }
     );
-
-    res.cookie('token', token, {
-      expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
     
     // Get redirect URL from session or use default
     const redirectUrl = req.session.redirectUrl || '/';
     delete req.session.redirectUrl;
     
-    // Redirect to frontend
-    res.redirect(`${process.env.FRONTEND_URL}${redirectUrl}`);
+    // Redirect to frontend with token in URL fragment
+    res.redirect(`${process.env.FRONTEND_URL}${redirectUrl}#token=${token}`);
   }
 );
 
