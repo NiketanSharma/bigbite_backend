@@ -189,12 +189,18 @@ router.get('/me', protect, async (req, res) => {
 // @desc    Logout user / clear cookie
 // @access  Public
 router.post('/logout', (req, res) => {
-  res.cookie('token', '', {
+  const cookieOptions = {
     httpOnly: true,
     expires: new Date(0),
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-  });
+    sameSite: process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
+  };
+
+  if (process.env.COOKIE_DOMAIN) {
+    cookieOptions.domain = process.env.COOKIE_DOMAIN;
+  }
+
+  res.cookie('token', '', cookieOptions);
 
   res.status(200).json({
     success: true,

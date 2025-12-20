@@ -26,9 +26,15 @@ export const sendTokenResponse = (user, statusCode, res) => {
     ),
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',//lax means the cookie is not sent on normal cross-site subrequests (for example to load images or frames into a third party site), but is sent when a user is navigating to the origin site 
-    // (i.e., when following a link).
+    sameSite: process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
+    // When deployed, use `sameSite=none` so cross-site requests (from Vercel frontend)
+    // can include the cookie. In non-production default to 'lax'.
   };
+
+  // Optionally set cookie domain if provided via env
+  if (process.env.COOKIE_DOMAIN) {
+    options.domain = process.env.COOKIE_DOMAIN;
+  }
 
   res.status(statusCode).cookie('token', token, options).json({
     success: true,
