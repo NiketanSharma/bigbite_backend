@@ -27,97 +27,39 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 
-// CORS - support single or comma-separated multiple FRONTEND_URLs
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://localhost:5174,https://bigbitefrontend-sigma.vercel.app,https://bigbite-frontend-sigma.vercel.app,https://bigbite-frontend.onrender.com,https://bigbite-backend.onrender.com')
-  .split(',')
-  .map((u) => u.trim());
 
-console.log('🔧 CORS Allowed Origins:', allowedOrigins);
 console.log('🔧 Current FRONTEND_URL env:', process.env.FRONTEND_URL);
-
+// For production, be more permissive with CORS
 // Configure Socket.IO with same CORS as Express
 export const io = new Server(httpServer, {
   cors: {
-    origin: (origin, callback) => {
-      // allow requests with no origin like mobile apps or curl
-      if (!origin) {
-        console.log('🔌 Socket.IO: Allowing connection with no origin');
-        return callback(null, true);
-      }
-
-      // In production, allow common Vercel and Render domains
-      if (isProduction) {
-        const allowedDomains = [
-          'vercel.app',
-          'onrender.com',
-          'localhost',
-          '127.0.0.1'
-        ];
-
-        const isAllowedDomain = allowedDomains.some(domain => origin.includes(domain));
-        if (isAllowedDomain) {
-          console.log('🔌 Socket.IO: Allowing production origin:', origin);
-          return callback(null, true);
-        }
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        console.log('🔌 Socket.IO: Allowing origin:', origin);
-        return callback(null, true);
-      }
-
-      console.error('🔌 Socket.IO: Blocking origin:', origin);
-      return callback(new Error(`Socket.IO CORS: Origin ${origin} not allowed`), false);
-    },
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "https://bigbitefrontend-sigma.vercel.app"
+    ],
     credentials: true,
   },
 });
 
-// For production, be more permissive with CORS
-const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // allow requests with no origin like mobile apps or curl
-      if (!origin) {
-        console.log('🔧 CORS: Allowing request with no origin');
-        return callback(null, true);
-      }
-
-      // In production, allow common Vercel and Render domains
-      if (isProduction) {
-        const allowedDomains = [
-          'vercel.app',
-          'onrender.com',
-          'localhost',
-          '127.0.0.1'
-        ];
-
-        const isAllowedDomain = allowedDomains.some(domain => origin.includes(domain));
-        if (isAllowedDomain) {
-          console.log('🔧 CORS: Allowing production origin:', origin);
-          return callback(null, true);
-        }
-      }
-
-      // Check against configured allowed origins
-      if (allowedOrigins.includes(origin)) {
-        console.log('🔧 CORS: Allowing configured origin:', origin);
-        return callback(null, true);
-      }
-
-      console.error('🔧 CORS: Blocking origin:', origin);
-      console.error('🔧 CORS: Allowed origins:', allowedOrigins);
-      console.error('🔧 CORS: Is production:', isProduction);
-      return callback(new Error(`CORS policy: Origin ${origin} not allowed`), false);
-    },
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "https://bigbitefrontend-sigma.vercel.app"
+    ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   })
 );
+
 // app.use(cors())
+app.options('*', cors());
+app.use(cookieParser()); 
+app.use(express.json())
 
 // Express session with MongoDB-backed store (recommended for production)
 const sessionStore = MongoStore.create({
@@ -134,12 +76,12 @@ app.use(
     saveUninitialized: false,
     proxy: process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production',
     cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax'),
-      domain: process.env.COOKIE_DOMAIN || undefined,
-      maxAge: Number(process.env.SESSION_MAX_AGE) || 24 * 60 * 60 * 1000,
-    },
+    httpOnly: true,
+    secure: true,      // Render is HTTPS
+    sameSite: "none",  // REQUIRED for cross-origin cookies
+    maxAge: 24 * 60 * 60 * 1000,
+}
+
   })
 );
 
@@ -765,7 +707,4 @@ process.on('unhandledRejection', (err) => {
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   console.error(err.stack);
-});
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
 });
