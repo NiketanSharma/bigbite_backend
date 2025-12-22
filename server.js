@@ -510,8 +510,9 @@ async function notifyNearbyRiders(order) {
     const restaurantLon = restaurant.restaurantDetails.address.longitude;
 
     const nearbyRiders = [];
+    const MAX_DISTANCE_KM = 500; // Maximum distance to search for riders
     
-    console.log(`\n🔍 Searching for riders within 200km radius...`);
+    console.log(`\n🔍 Searching for riders within ${MAX_DISTANCE_KM}km radius...`);
     console.log(`📍 Restaurant Location: Lat ${restaurantLat}, Lon ${restaurantLon}`);
     console.log(`👥 Total active riders in pool: ${activeRidersPool.size}`);
     
@@ -527,14 +528,14 @@ async function notifyNearbyRiders(order) {
       console.log(`\n🏍️ Rider: ${riderData.name} (ID: ${riderId})`);
       console.log(`   📍 Location: Lat ${riderData.coordinates.latitude}, Lon ${riderData.coordinates.longitude}`);
       console.log(`   📏 Distance: ${distance.toFixed(2)} km`);
-      console.log(`   ${distance <= 1000 ? '✅ Within range!' : '❌ Too far'}`);
+      console.log(`   ${distance <= MAX_DISTANCE_KM ? '✅ Within range!' : '❌ Too far'}`);
 
-      if (distance <= 1000) {
+      if (distance <= MAX_DISTANCE_KM) {
         nearbyRiders.push({ riderId, riderName: riderData.name, distance });
       }
     });
 
-    console.log(`\n✅ Found ${nearbyRiders.length} riders within 1000km:`);
+    console.log(`\n✅ Found ${nearbyRiders.length} riders within ${MAX_DISTANCE_KM}km:`);
     nearbyRiders.forEach(({ riderName, distance }) => {
       console.log(`   🏍️ ${riderName} - ${distance.toFixed(2)} km away`);
     });
