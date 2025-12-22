@@ -464,15 +464,6 @@ router.post('/:id/accept', async (req, res) => {
       riderPhone: rider.phone,
     });
 
-    // Also emit status change event
-    io.to(`order_${order._id}`).emit('order_status_changed', {
-      orderId: order._id,
-      status: 'rider_assigned',
-      message: `Rider ${rider.name} accepted your order!`,
-      riderName: rider.name,
-      riderPhone: rider.phone,
-    });
-
     // Notify restaurant to refresh dashboard
     io.to(`restaurant_${order.restaurant}`).emit('order_status_changed', {
       orderId: order._id,
@@ -491,6 +482,159 @@ router.post('/:id/accept', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error accepting order',
+      error: error.message,
+    });
+  }
+});
+
+// POST /api/orders/:id/verify-pickup-pin - Verify pickup PIN before marking as picked up
+router.post('/:id/verify-pickup-pin', async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const orderId = req.params.id;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    // Verify PIN
+    if (order.pickupPin !== pin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid pickup PIN',
+      });
+    }
+
+    // Update status to picked_up
+    order.status = 'picked_up';
+    order.pickedUpAt = new Date();
+    await order.save();
+
+    // Populate for socket emission
+    await order.populate([
+      { path: 'customer', select: 'name email phone' },
+      { path: 'restaurant', select: 'restaurantDetails' },
+      { path: 'rider', select: 'name phone' },
+    ]);
+
+    // Emit status update to order room
+    io.to(`order_${orderId}`).emit('order_status_changed', {
+      orderId: order._id,
+      status: 'picked_up',
+      timestamp: new Date(),
+      message: 'Rider has picked up your order',
+    });
+
+    // Emit to restaurant
+    io.to(`restaurant_${order.restaurant._id}`).emit('order_status_changed', {
+      orderId: order._id,
+      status: 'picked_up',
+      timestamp: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Pickup verified successfully',
+      order,
+    });
+  } catch (error) {
+    console.error('❌ Error verifying pickup PIN:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying pickup PIN',
+      error: error.message,
+    });
+  }
+});
+
+// POST /api/orders/:id/verify-delivery-pin - Verify delivery PIN before marking as delivered
+router.post('/:id/verify-delivery-pin', async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const orderId = req.params.id;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    // Verify PIN
+    if (order.deliveryPin !== pin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid delivery PIN',
+      });
+    }
+
+    // Update status to delivered
+    order.status = 'delivered';
+    order.deliveredAt = new Date();
+
+    // Update rider statistics
+    if (order.rider) {
+      const rider = await User.findById(order.rider);
+      if (rider && rider.role === 'rider') {
+        // Check if it's a new day, reset today's earnings
+        const lastReset = new Date(rider.riderDetails.lastEarningsReset);
+        const today = new Date();
+        if (lastReset.toDateString() !== today.toDateString()) {
+          rider.riderDetails.todayEarnings = 0;
+          rider.riderDetails.lastEarningsReset = today;
+        }
+        
+        // Update stats
+        rider.riderDetails.totalDeliveries = (rider.riderDetails.totalDeliveries || 0) + 1;
+        rider.riderDetails.totalEarnings = (rider.riderDetails.totalEarnings || 0) + (order.riderEarnings || 0);
+        rider.riderDetails.todayEarnings = (rider.riderDetails.todayEarnings || 0) + (order.riderEarnings || 0);
+        
+        await rider.save();
+        console.log(`💰 Rider ${rider.name} earned ₹${order.riderEarnings}. Today: ₹${rider.riderDetails.todayEarnings}, Total: ₹${rider.riderDetails.totalEarnings}`);
+      }
+    }
+
+    await order.save();
+
+    // Populate for socket emission
+    await order.populate([
+      { path: 'customer', select: 'name email phone' },
+      { path: 'restaurant', select: 'restaurantDetails' },
+      { path: 'rider', select: 'name phone' },
+    ]);
+
+    // Emit status update to order room
+    io.to(`order_${orderId}`).emit('order_status_changed', {
+      orderId: order._id,
+      status: 'delivered',
+      timestamp: new Date(),
+      message: 'Your order has been delivered',
+    });
+
+    // Emit to restaurant
+    io.to(`restaurant_${order.restaurant._id}`).emit('order_status_changed', {
+      orderId: order._id,
+      status: 'delivered',
+      timestamp: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Delivery verified successfully',
+      order,
+    });
+  } catch (error) {
+    console.error('❌ Error verifying delivery PIN:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying delivery PIN',
       error: error.message,
     });
   }
@@ -580,7 +724,7 @@ router.patch('/:id/status', async (req, res) => {
     await order.save();
 
     // Emit status update to order room
-    io.to(`order_${orderId}`).emit('order_status_update', {
+    io.to(`order_${orderId}`).emit('order_status_changed', {
       orderId: order._id,
       status,
       timestamp: new Date(),
@@ -627,7 +771,11 @@ router.get('/customer/:customerId', async (req, res) => {
   try {
     const { customerId } = req.params;
 
-    const orders = await Order.find({ customer: customerId })
+    // Exclude pending_payment orders (failed payments that were never confirmed)
+    const orders = await Order.find({ 
+      customer: customerId,
+      status: { $ne: 'pending_payment' } // Exclude pending_payment status
+    })
       .populate([
         { path: 'restaurant', select: 'restaurantDetails' },
         { path: 'rider', select: 'name phone' },

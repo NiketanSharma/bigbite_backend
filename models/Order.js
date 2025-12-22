@@ -64,6 +64,23 @@ const orderSchema = new mongoose.Schema({
     default: null
   },
 
+  // PIN Verification for Pickup and Delivery
+  pickupPin: {
+    type: String,
+    required: true,
+    default: function() {
+      return Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit PIN
+    }
+  },
+
+  deliveryPin: {
+    type: String,
+    required: true,
+    default: function() {
+      return Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit PIN
+    }
+  },
+
   // Pricing
   subtotal: {
     type: Number,

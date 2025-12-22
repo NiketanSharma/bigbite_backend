@@ -393,16 +393,7 @@ io.on('connection', (socket) => {
         }
       });
 
-      // Notify customer via order room
-      io.to(`order_${orderId}`).emit('order_status_changed', {
-        orderId,
-        status: 'rider_assigned',
-        message: `Rider ${riderUser?.name || 'A rider'} accepted your order!`,
-        riderName: riderUser?.name,
-        riderPhone: riderUser?.phone,
-      });
-
-      // Also emit order_accepted event for customer
+      // Notify customer via order room - only use order_accepted event
       io.to(`order_${orderId}`).emit('order_accepted', {
         orderId,
         status: 'rider_assigned',
@@ -536,14 +527,14 @@ async function notifyNearbyRiders(order) {
       console.log(`\n🏍️ Rider: ${riderData.name} (ID: ${riderId})`);
       console.log(`   📍 Location: Lat ${riderData.coordinates.latitude}, Lon ${riderData.coordinates.longitude}`);
       console.log(`   📏 Distance: ${distance.toFixed(2)} km`);
-      console.log(`   ${distance <= 200 ? '✅ Within range!' : '❌ Too far'}`);
+      console.log(`   ${distance <= 1000 ? '✅ Within range!' : '❌ Too far'}`);
 
-      if (distance <= 200) {
+      if (distance <= 1000) {
         nearbyRiders.push({ riderId, riderName: riderData.name, distance });
       }
     });
 
-    console.log(`\n✅ Found ${nearbyRiders.length} riders within 200km:`);
+    console.log(`\n✅ Found ${nearbyRiders.length} riders within 1000km:`);
     nearbyRiders.forEach(({ riderName, distance }) => {
       console.log(`   🏍️ ${riderName} - ${distance.toFixed(2)} km away`);
     });
