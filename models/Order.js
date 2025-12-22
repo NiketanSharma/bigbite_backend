@@ -58,6 +58,12 @@ const orderSchema = new mongoose.Schema({
     default: 'pending'
   },
   
+  // Razorpay Payment ID (for online payments)
+  razorpay_payment_id: {
+    type: String,
+    default: null
+  },
+
   // Pricing
   subtotal: {
     type: Number,

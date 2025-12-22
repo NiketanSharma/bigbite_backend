@@ -1,6 +1,7 @@
 import express from 'express';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
+import Payment from '../models/Payment.js';
 import { io, activeOrdersPool, activeRidersPool } from '../server.js';
 
 const router = express.Router();
@@ -30,9 +31,39 @@ router.post('/', async (req, res) => {
       deliveryAddress,
       paymentMethod,
       pricing,
+      razorpay_order_id, // For online payments
     } = req.body;
 
     console.log('📦 Received order request:', { customerId, restaurantId, items: items?.length, deliveryAddress, paymentMethod, pricing });
+    
+    // If online payment, verify payment success before creating order
+    if (paymentMethod === 'online') {
+      if (!razorpay_order_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment order ID is required for online payment',
+        });
+      }
+
+      // Verify payment status from database
+      const payment = await Payment.findOne({ razorpay_order_id });
+      
+      if (!payment) {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment record not found',
+        });
+      }
+
+      if (payment.status !== 'SUCCESS') {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment verification failed. Please complete the payment first.',
+        });
+      }
+
+      console.log('✅ Payment verified for order placement:', razorpay_order_id);
+    }
     
     console.log('💰 PRICING DATA RECEIVED FROM FRONTEND:');
     console.log('   Subtotal:', pricing?.subtotal);
@@ -93,7 +124,7 @@ router.post('/', async (req, res) => {
     console.log('📦 Items received from frontend:', JSON.stringify(items, null, 2));
 
     // Create the order with pricing fields extracted from pricing object
-    const order = new Order({
+    const orderData = {
       customer: customerId,
       restaurant: restaurantId,
       items,
@@ -115,7 +146,17 @@ router.post('/', async (req, res) => {
       platformFee: pricing.platformFee,
       gst: pricing.gst,
       totalAmount: pricing.totalAmount,
-    });
+    };
+
+    // If online payment, get payment details from Payment collection
+    if (paymentMethod === 'online' && razorpay_order_id) {
+      const payment = await Payment.findOne({ razorpay_order_id });
+      if (payment && payment.razorpay_payment_id) {
+        orderData.razorpay_payment_id = payment.razorpay_payment_id;
+      }
+    }
+
+    const order = new Order(orderData);
 
     await order.save();
 
