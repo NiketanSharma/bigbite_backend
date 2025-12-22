@@ -107,3 +107,5 @@ npm start
 - **rider**: Delivery riders who deliver orders
 - **restaurant**: Restaurant partners who manage their menu
 - **admin**: Platform administrators (not available for signup)
+
+  
