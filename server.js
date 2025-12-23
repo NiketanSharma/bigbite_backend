@@ -162,10 +162,22 @@ io.on('connection', (socket) => {
       }
 
       // Use coordinates from the emit or fallback to database
-      const riderCoords = coordinates || {
-        latitude: rider.riderDetails?.currentLocation?.latitude || 0,
-        longitude: rider.riderDetails?.currentLocation?.longitude || 0,
-      };
+      let riderCoords = coordinates;
+      
+      // If coordinates not provided or invalid, use database location
+      if (!riderCoords || !riderCoords.latitude || !riderCoords.longitude) {
+        riderCoords = {
+          latitude: rider.riderDetails?.currentLocation?.latitude,
+          longitude: rider.riderDetails?.currentLocation?.longitude,
+        };
+      }
+      
+      // Final validation - if still no coordinates, reject
+      if (!riderCoords.latitude || !riderCoords.longitude) {
+        console.error(`❌ Rider ${riderId} has no valid coordinates`);
+        socket.emit('error', { message: 'Location required to join rider pool. Please enable location services.' });
+        return;
+      }
 
       // Add rider to active pool
       activeRidersPool.set(riderId, {
@@ -184,6 +196,9 @@ io.on('connection', (socket) => {
       console.log(`🏍️ Rider ${rider.name} (${riderId}) joined active pool at [${riderCoords.latitude}, ${riderCoords.longitude}]`);
       console.log(`📊 Total active riders: ${activeRidersPool.size}`);
       socket.emit('joined_pool', { message: 'Successfully joined active riders pool' });
+      
+      // Check for any existing orders awaiting riders and notify this rider
+      await notifyRiderOfAvailableOrders(riderId, riderCoords);
     } catch (error) {
       console.error('❌ Error in rider_join_pool:', error);
     }
@@ -487,6 +502,83 @@ io.on('connection', (socket) => {
     console.log('🔌 Client disconnected:', socket.id);
   });
 });
+
+// Helper function to notify a specific rider of available orders when they join the pool
+async function notifyRiderOfAvailableOrders(riderId, riderCoords) {
+  try {
+    const MAX_DISTANCE_KM = 1000;
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    
+    console.log(`🔔 Checking available orders for newly joined rider ${riderId}`);
+    
+    // Get orders from activeOrdersPool that are awaiting riders
+    const availableOrderIds = [];
+    for (const [orderId, orderData] of activeOrdersPool.entries()) {
+      if (orderData.status === 'awaiting_rider' && orderData.createdAt >= tenMinutesAgo) {
+        availableOrderIds.push(orderId);
+      }
+    }
+    
+    if (availableOrderIds.length === 0) {
+      console.log('✅ No available orders to notify');
+      return;
+    }
+    
+    console.log(`📦 Found ${availableOrderIds.length} available orders, checking distances...`);
+    
+    // Fetch full order details
+    const orders = await Order.find({ _id: { $in: availableOrderIds } })
+      .populate('restaurant')
+      .populate('customer');
+    
+    // Notify rider of nearby orders
+    let notifiedCount = 0;
+    for (const order of orders) {
+      const restaurant = order.restaurant;
+      if (!restaurant?.restaurantDetails?.address?.latitude || !restaurant?.restaurantDetails?.address?.longitude) {
+        continue;
+      }
+      
+      const distance = calculateDistance(
+        riderCoords.latitude,
+        riderCoords.longitude,
+        restaurant.restaurantDetails.address.latitude,
+        restaurant.restaurantDetails.address.longitude
+      );
+      
+      if (distance <= MAX_DISTANCE_KM) {
+        const distanceToCustomer = calculateDistance(
+          restaurant.restaurantDetails.address.latitude,
+          restaurant.restaurantDetails.address.longitude,
+          order.deliveryAddress.latitude,
+          order.deliveryAddress.longitude
+        );
+        
+        const riderEarnings = order.deliveryFee > 0 
+          ? order.deliveryFee 
+          : Math.round(distanceToCustomer * 8);
+        
+        io.to(`rider_${riderId}`).emit('new_order_available', {
+          orderId: order._id,
+          restaurantName: restaurant.restaurantDetails.kitchenName,
+          restaurantAddress: restaurant.restaurantDetails.address,
+          deliveryAddress: order.deliveryAddress,
+          totalAmount: order.totalAmount,
+          distance: distance.toFixed(2),
+          distanceToCustomer: distanceToCustomer.toFixed(2),
+          riderEarnings,
+          paymentMethod: order.paymentMethod,
+          items: order.items,
+        });
+        notifiedCount++;
+      }
+    }
+    
+    console.log(`✅ Notified rider ${riderId} of ${notifiedCount} nearby orders`);
+  } catch (error) {
+    console.error('❌ Error notifying rider of available orders:', error);
+  }
+}
 
 // Helper function to notify nearby riders
 async function notifyNearbyRiders(order) {

@@ -800,11 +800,22 @@ router.get('/customer/:customerId', async (req, res) => {
 // GET /api/orders/available - Get all available orders from activeOrdersPool
 router.get('/available', async (req, res) => {
   try {
-    const { latitude, longitude } = req.query;
+    let { latitude, longitude } = req.query;
     const MAX_DISTANCE_KM = 1000;
     
     console.log(`📦 Fetching available orders from pool (${activeOrdersPool.size} total)`);
-    console.log(`📍 Rider location: ${latitude}, ${longitude}`);
+    console.log(`📍 Rider location from query: ${latitude}, ${longitude}`);
+    
+    // If location not provided in query, try to get from authenticated user
+    if ((!latitude || !longitude) && req.user) {
+      // Try to find rider in activeRidersPool
+      const riderData = activeRidersPool.get(req.user.toString());
+      if (riderData && riderData.coordinates) {
+        latitude = riderData.coordinates.latitude;
+        longitude = riderData.coordinates.longitude;
+        console.log(`📍 Using rider location from activeRidersPool: ${latitude}, ${longitude}`);
+      }
+    }
 
     // Get orders from activeOrdersPool that are awaiting riders
     const availableOrdersFromPool = [];
@@ -841,10 +852,11 @@ router.get('/available', async (req, res) => {
 
     let filteredOrders = orders;
 
-    // If rider location is provided, filter by distance
-    if (latitude && longitude) {
+    // If rider location is provided or found, filter by distance
+    if (latitude && longitude && !isNaN(parseFloat(latitude)) && !isNaN(parseFloat(longitude))) {
       const riderLat = parseFloat(latitude);
       const riderLon = parseFloat(longitude);
+      console.log(`📍 Final rider location for filtering: ${riderLat}, ${riderLon}`);
 
       console.log(`🔍 Filtering orders within ${MAX_DISTANCE_KM}km radius`);
 
@@ -856,6 +868,21 @@ router.get('/available', async (req, res) => {
         }
 
         const distance = calculateDistance(
+          riderLat,
+          riderLon,
+          restaurant.restaurantDetails.address.latitude,
+          restaurant.restaurantDetails.address.longitude
+        );
+
+        const withinRange = distance <= MAX_DISTANCE_KM;
+        console.log(`📦 Order ${order.orderNumber}: ${distance.toFixed(2)}km - ${withinRange ? '✅ Within range' : '❌ Too far'}`);
+
+        return withinRange;
+      });
+
+      console.log(`✅ ${filteredOrders.length} orders within ${MAX_DISTANCE_KM}km radius`);
+    } else {
+      console.log(`⚠️ No valid rider location provided - returning all available orders without distance filtering`);
           riderLat,
           riderLon,
           restaurant.restaurantDetails.address.latitude,
