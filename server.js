@@ -183,14 +183,18 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Add rider to active pool
+      // Check if rider already exists in pool to preserve activeOrders
+      const existingRiderData = activeRidersPool.get(riderId);
+      const existingActiveOrders = existingRiderData?.activeOrders || [];
+
+      // Add rider to active pool (preserve activeOrders if already exists)
       activeRidersPool.set(riderId, {
         socketId: socket.id,
         riderId,
         name: rider.name,
         phone: rider.phone,
         coordinates: riderCoords,
-        activeOrders: [],
+        activeOrders: existingActiveOrders, // Preserve existing orders
         lastUpdate: new Date(),
       });
 
@@ -198,6 +202,7 @@ io.on('connection', (socket) => {
       socket.join(`rider_${riderId}`);
       
       console.log(`🏍️ Rider ${rider.name} (${riderId}) joined active pool at [${riderCoords.latitude}, ${riderCoords.longitude}]`);
+      console.log(`📦 Active orders for this rider: ${existingActiveOrders.length}`);
       console.log(`📊 Total active riders: ${activeRidersPool.size}`);
       socket.emit('joined_pool', { message: 'Successfully joined active riders pool' });
       
@@ -223,43 +228,63 @@ io.on('connection', (socket) => {
   // Rider live location update (every 10 seconds, not saved to DB)
   socket.on('rider_location_update', async ({ riderId, coordinates }) => {
     try {
+      console.log(`📍 ===== RIDER LOCATION UPDATE =====`);
+      console.log(`   Rider ID: ${riderId}`);
+      console.log(`   Coordinates: [${coordinates.latitude}, ${coordinates.longitude}]`);
+      
       const riderData = activeRidersPool.get(riderId);
-      if (riderData) {
-        riderData.coordinates = coordinates;
-        riderData.lastUpdate = new Date();
-        activeRidersPool.set(riderId, riderData);
-
-        // Update rider location in all active orders in database
-        if (riderData.activeOrders && riderData.activeOrders.length > 0) {
-          await Order.updateMany(
-            { _id: { $in: riderData.activeOrders } },
-            { 
-              $set: { 
-                'riderLocation.latitude': coordinates.latitude,
-                'riderLocation.longitude': coordinates.longitude,
-                'riderLocation.lastUpdated': new Date()
-              }
-            }
-          );
-        }
-
-        // Broadcast location to all active orders this rider is handling
-        riderData.activeOrders.forEach(orderId => {
-          const orderSocket = activeOrdersPool.get(orderId);
-          if (orderSocket) {
-            orderSocket.riderCoordinates = coordinates;
-            activeOrdersPool.set(orderId, orderSocket);
-            
-            // Emit to customer tracking the order
-            io.to(`order_${orderId}`).emit('rider_location_live', {
-              orderId,
-              latitude: coordinates.latitude,
-              longitude: coordinates.longitude,
-              timestamp: new Date(),
-            });
-          }
-        });
+      if (!riderData) {
+        console.log(`   ❌ Rider not found in activeRidersPool`);
+        return;
       }
+      
+      console.log(`   ✅ Rider found in pool`);
+      console.log(`   Active Orders: ${riderData.activeOrders?.length || 0}`);
+      if (riderData.activeOrders && riderData.activeOrders.length > 0) {
+        console.log(`   Order IDs: ${riderData.activeOrders.join(', ')}`);
+      }
+      
+      riderData.coordinates = coordinates;
+      riderData.lastUpdate = new Date();
+      activeRidersPool.set(riderId, riderData);
+
+      // Update rider location in all active orders in database
+      if (riderData.activeOrders && riderData.activeOrders.length > 0) {
+        await Order.updateMany(
+          { _id: { $in: riderData.activeOrders } },
+          { 
+            $set: { 
+              'riderLocation.latitude': coordinates.latitude,
+              'riderLocation.longitude': coordinates.longitude,
+              'riderLocation.lastUpdated': new Date()
+            }
+          }
+        );
+        console.log(`   💾 Updated location in database for ${riderData.activeOrders.length} orders`);
+      }
+
+      // Broadcast location to all active orders this rider is handling
+      let broadcastCount = 0;
+      riderData.activeOrders.forEach(orderId => {
+        const orderSocket = activeOrdersPool.get(orderId);
+        if (orderSocket) {
+          orderSocket.riderCoordinates = coordinates;
+          activeOrdersPool.set(orderId, orderSocket);
+        }
+        
+        // Emit to customer tracking the order
+        io.to(`order_${orderId}`).emit('rider_location_live', {
+          orderId,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          timestamp: new Date(),
+        });
+        broadcastCount++;
+        console.log(`   📤 Broadcast to order_${orderId}`);
+      });
+      
+      console.log(`   ✅ Location broadcast to ${broadcastCount} order rooms`);
+      console.log(`📍 ================================`);
     } catch (error) {
       console.error('❌ Error in rider_location_update:', error);
     }
