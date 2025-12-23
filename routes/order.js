@@ -425,11 +425,11 @@ router.post('/:id/accept', async (req, res) => {
       });
     }
 
-    // Check if order is still pending
-    if (order.status !== 'pending') {
+    // Check if order is still awaiting rider assignment
+    if (order.status !== 'awaiting_rider' || order.rider) {
       return res.status(400).json({
         success: false,
-        message: 'Order has already been accepted',
+        message: 'Order has already been assigned or is not available',
       });
     }
 
@@ -610,7 +610,7 @@ router.post('/:id/verify-delivery-pin', async (req, res) => {
       { path: 'rider', select: 'name phone' },
     ]);
 
-    // Emit status update to order room
+    // Emit status update to order room (customer tracking)
     io.to(`order_${orderId}`).emit('order_status_changed', {
       orderId: order._id,
       status: 'delivered',
@@ -618,12 +618,21 @@ router.post('/:id/verify-delivery-pin', async (req, res) => {
       message: 'Your order has been delivered',
     });
 
-    // Emit to restaurant
+    // Emit to restaurant dashboard
     io.to(`restaurant_${order.restaurant._id}`).emit('order_status_changed', {
       orderId: order._id,
       status: 'delivered',
       timestamp: new Date(),
     });
+
+    // Emit to rider dashboard so order moves to completed section
+    if (order.rider) {
+      io.to(`rider_${order.rider._id}`).emit('order_status_changed', {
+        orderId: order._id,
+        status: 'delivered',
+        timestamp: new Date(),
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -797,13 +806,13 @@ router.get('/customer/:customerId', async (req, res) => {
   }
 });
 
-// GET /api/orders/available - Get all available orders from activeOrdersPool
+// GET /api/orders/available - Get all available orders from database (awaiting_rider status)
 router.get('/available', async (req, res) => {
   try {
     let { latitude, longitude } = req.query;
     const MAX_DISTANCE_KM = 1000;
     
-    console.log(`📦 Fetching available orders from pool (${activeOrdersPool.size} total)`);
+    console.log(`📦 Fetching available orders from database`);
     console.log(`📍 Rider location from query: ${latitude}, ${longitude}`);
     
     // If location not provided in query, try to get from authenticated user
@@ -817,38 +826,20 @@ router.get('/available', async (req, res) => {
       }
     }
 
-    // Get orders from activeOrdersPool that are awaiting riders
-    const availableOrdersFromPool = [];
-    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-
-    for (const [orderId, orderData] of activeOrdersPool.entries()) {
-      // Only include orders awaiting riders and created within last 10 minutes
-      if (orderData.status === 'awaiting_rider' && orderData.createdAt >= tenMinutesAgo) {
-        availableOrdersFromPool.push(orderId);
-      }
-    }
-
-    console.log(`✅ Found ${availableOrdersFromPool.length} awaiting_rider orders in pool`);
-
-    if (availableOrdersFromPool.length === 0) {
-      return res.json({
-        success: true,
-        orders: [],
-      });
-    }
-
-    // Fetch full order details from database
+    // Fetch orders from database that are awaiting riders (accepted by restaurant, not yet picked by rider)
     const orders = await Order.find({ 
-      _id: { $in: availableOrdersFromPool }
+      status: 'awaiting_rider',
+      rider: null // Only orders not yet assigned to any rider
     })
       .populate([
         { path: 'customer', select: 'name phone address' },
         { path: 'restaurant', select: 'restaurantDetails name' },
         { path: 'items.menuItem', select: 'name price image' },
       ])
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(50); // Limit to recent 50 orders
 
-    console.log(`📥 Populated ${orders.length} orders from database`);
+    console.log(`📥 Found ${orders.length} orders with status='awaiting_rider' and rider=null`);
 
     let filteredOrders = orders;
 

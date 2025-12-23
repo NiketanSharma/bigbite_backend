@@ -221,13 +221,27 @@ io.on('connection', (socket) => {
   });
 
   // Rider live location update (every 10 seconds, not saved to DB)
-  socket.on('rider_location_update', ({ riderId, coordinates }) => {
+  socket.on('rider_location_update', async ({ riderId, coordinates }) => {
     try {
       const riderData = activeRidersPool.get(riderId);
       if (riderData) {
         riderData.coordinates = coordinates;
         riderData.lastUpdate = new Date();
         activeRidersPool.set(riderId, riderData);
+
+        // Update rider location in all active orders in database
+        if (riderData.activeOrders && riderData.activeOrders.length > 0) {
+          await Order.updateMany(
+            { _id: { $in: riderData.activeOrders } },
+            { 
+              $set: { 
+                'riderLocation.latitude': coordinates.latitude,
+                'riderLocation.longitude': coordinates.longitude,
+                'riderLocation.lastUpdated': new Date()
+              }
+            }
+          );
+        }
 
         // Broadcast location to all active orders this rider is handling
         riderData.activeOrders.forEach(orderId => {
@@ -289,9 +303,12 @@ io.on('connection', (socket) => {
         return;
       }
 
-      order.status = 'accepted';
+      // Save status as 'awaiting_rider' in database so it appears in rider's available orders
+      order.status = 'awaiting_rider';
       order.acceptedAt = new Date();
       await order.save();
+
+      console.log(`✅ Restaurant accepted order ${orderId}, saved to DB with status: awaiting_rider`);
 
       // Update order socket with awaiting_rider status
       const orderSocket = activeOrdersPool.get(orderId);
@@ -305,14 +322,14 @@ io.on('connection', (socket) => {
       // Notify customer
       io.to(`order_${orderId}`).emit('order_status_changed', {
         orderId,
-        status: 'accepted',
+        status: 'awaiting_rider',
         message: 'Restaurant accepted your order',
       });
 
       // Notify restaurant to update their UI
       io.to(`restaurant_${restaurantId}`).emit('order_status_changed', {
         orderId,
-        status: 'accepted',
+        status: 'awaiting_rider',
         message: 'Order accepted successfully',
       });
 
@@ -348,6 +365,13 @@ io.on('connection', (socket) => {
         reason,
       });
 
+      // Notify restaurant to update their UI
+      io.to(`restaurant_${order.restaurant}`).emit('order_status_changed', {
+        orderId,
+        status: 'rejected',
+        message: 'Order rejected successfully',
+      });
+
       console.log(`❌ Restaurant rejected order: ${orderId}`);
     } catch (error) {
       console.error('❌ Error in restaurant_reject_order:', error);
@@ -358,8 +382,11 @@ io.on('connection', (socket) => {
   socket.on('rider_accept_order', async ({ orderId, riderId }) => {
     try {
       const order = await Order.findById(orderId).populate('restaurant customer rider');
-      if (!order || order.status !== 'accepted') {
+      
+      // Check if order is still available (awaiting_rider and no rider assigned yet)
+      if (!order || order.status !== 'awaiting_rider' || order.rider) {
         socket.emit('error', { message: 'Order not available' });
+        console.log(`❌ Order ${orderId} not available. Status: ${order?.status}, Rider: ${order?.rider}`);
         return;
       }
 
@@ -384,11 +411,21 @@ io.on('connection', (socket) => {
       order.acceptedAt = new Date();
       order.distanceToCustomer = distanceToCustomer;
       order.riderEarnings = riderEarnings;
-      await order.save();
-
-      // Get rider details
+      
+      // Get rider details and location
       const riderData = activeRidersPool.get(riderId);
       const riderUser = await User.findById(riderId);
+      
+      // Save rider's initial location to order if available
+      if (riderData?.coordinates) {
+        order.riderLocation = {
+          latitude: riderData.coordinates.latitude,
+          longitude: riderData.coordinates.longitude,
+          lastUpdated: new Date()
+        };
+      }
+      
+      await order.save();
 
       // Update rider's active orders
       if (riderData) {
@@ -420,7 +457,19 @@ io.on('connection', (socket) => {
         message: `Rider ${riderUser?.name || 'A rider'} accepted your order!`,
         riderName: riderUser?.name,
         riderPhone: riderUser?.phone,
+        riderCoordinates: riderData?.coordinates, // Include rider's current location
       });
+
+      // Send initial rider location to customer for live tracking
+      if (riderData?.coordinates) {
+        io.to(`order_${orderId}`).emit('rider_location_live', {
+          orderId,
+          latitude: riderData.coordinates.latitude,
+          longitude: riderData.coordinates.longitude,
+          timestamp: new Date(),
+        });
+        console.log(`📍 Sent initial rider location to customer: ${riderData.coordinates.latitude}, ${riderData.coordinates.longitude}`);
+      }
 
       // Notify restaurant to refresh dashboard
       io.to(`restaurant_${order.restaurant._id}`).emit('order_status_changed', {
@@ -473,8 +522,15 @@ io.on('connection', (socket) => {
         activeOrdersPool.set(orderId, orderSocket);
       }
 
-      // Broadcast to all parties
+      // Broadcast to customer
       io.to(`order_${orderId}`).emit('order_status_changed', {
+        orderId,
+        status,
+        timestamp: new Date(),
+      });
+
+      // Notify restaurant to update their dashboard
+      io.to(`restaurant_${order.restaurant}`).emit('order_status_changed', {
         orderId,
         status,
         timestamp: new Date(),
