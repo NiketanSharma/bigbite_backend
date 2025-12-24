@@ -32,19 +32,28 @@ const httpServer = createServer(app);
 
 
 console.log('🔧 Current FRONTEND_URL env:', process.env.FRONTEND_URL);
-// For production, be more permissive with CORS
+
+// Get allowed origins from environment variables
+const getAllowedOrigins = () => {
+  const origins = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'http://localhost:5174',
+  ].filter(Boolean); // Remove undefined values
+  
+  console.log('✅ Allowed CORS origins:', origins);
+  return origins;
+};
+
+const allowedOrigins = getAllowedOrigins();
+
 // Configure Socket.IO with same CORS as Express
 export const io = new Server(httpServer, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "https://bigbitefoods.vercel.app",
-      "https://bharat-kumar-19030.github.io"
-    ],
+    origin: allowedOrigins,
     credentials: true,
   },
-  transports: ["websocket"],   //  REQUIRED
+  transports: ["websocket", "polling"], // Support both transports for reliability
   pingInterval: 25000,
   pingTimeout: 20000,
 });
@@ -53,12 +62,7 @@ export const io = new Server(httpServer, {
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "https://bigbitefoods.vercel.app",
-      "https://bharat-kumar-19030.github.io"
-    ],
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   })
@@ -78,7 +82,7 @@ const sessionStore = MongoStore.create({
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'change_this_secret',
+    secret: process.env.SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
@@ -93,6 +97,17 @@ app.use(
     }
   })
 );
+
+// Validate required environment variables
+if (!process.env.SESSION_SECRET) {
+  console.error('❌ FATAL: SESSION_SECRET is not set in environment variables');
+  process.exit(1);
+}
+
+if (!process.env.MONGODB_URI) {
+  console.error('❌ FATAL: MONGODB_URI is not set in environment variables');
+  process.exit(1);
+}
 
 // Passport middleware
 app.use(passport.initialize());
