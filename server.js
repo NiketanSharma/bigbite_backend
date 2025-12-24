@@ -56,7 +56,7 @@ app.use(
     origin: [
       "http://localhost:5173",
       "http://localhost:5174",
-      "https://bigbitefrontend-sigma.vercel.app",
+      "https://bigbitefoods.vercel.app",
       "https://bharat-kumar-19030.github.io"
     ],
     credentials: true,
