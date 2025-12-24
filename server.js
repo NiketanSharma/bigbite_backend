@@ -44,6 +44,9 @@ export const io = new Server(httpServer, {
     ],
     credentials: true,
   },
+  transports: ["websocket"],   //  REQUIRED
+  pingInterval: 25000,
+  pingTimeout: 20000,
 });
 
 
@@ -62,7 +65,7 @@ app.use(
 );
 
 // app.use(cors())
-app.options('*', cors());
+app.options('*', cors()); // Enable pre-flight for all routes(means all routes will accept OPTIONS method, here OPTIONS method is preflight request ,preflight is an initial request made to check if the actual request is safe to send)
 app.use(cookieParser()); 
 app.use(express.json())
 
@@ -594,14 +597,31 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    // Remove rider from pool if disconnected
-    if (socket.riderId) {
-      activeRidersPool.delete(socket.riderId);
-      console.log(`🔌 Rider ${socket.riderId} disconnected. Total active: ${activeRidersPool.size}`);
-    }
-    console.log('🔌 Client disconnected:', socket.id);
-  });
+  // socket.on('disconnect', () => {
+  //   // Remove rider from pool if disconnected
+  //   if (socket.riderId) {
+  //     activeRidersPool.delete(socket.riderId);
+  //     console.log(`🔌 Rider ${socket.riderId} disconnected. Total active: ${activeRidersPool.size}`);
+  //   }
+  //   console.log('🔌 Client disconnected:', socket.id);
+  // });
+  socket.on("disconnect", () => {
+  if (socket.riderId) {
+    const riderId = socket.riderId;
+
+    setTimeout(() => {
+      const rider = activeRidersPool.get(riderId);
+      if (rider && rider.socketId === socket.id) {
+        activeRidersPool.delete(riderId);
+        console.log(` Rider ${riderId} removed after timeout`);
+      }
+    }, 30000); // 30s grace period
+  }
+
+  console.log("🔌 Client disconnected:", socket.id);
+});
+
+
 });
 
 // Helper function to notify a specific rider of available orders when they join the pool
