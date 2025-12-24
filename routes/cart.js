@@ -137,6 +137,17 @@ router.delete("/remove/:menuItemId",protect,async(req,res)=>{
         const user=await User.findById(req.user.id);
         user.cart=user.cart.filter(item=>item.menuItem.toString()!==req.params.menuItemId);
         await user.save();
+        
+        // Populate cart items before sending response
+        await user.populate({
+            path: 'cart.menuItem',
+            select: 'name description price image isVeg category subCategory cuisine isAvailable'
+        });
+        await user.populate({
+            path: 'cart.restaurantId',
+            select: 'restaurantDetails.kitchenName restaurantDetails.isKitchenOpen restaurantDetails.address'
+        });
+        
         res.status(200).json({
             success:true,
             cart:user.cart,
